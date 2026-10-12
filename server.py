@@ -1,4 +1,4 @@
-"""Web service: Zoho Flow webhook, background poller, and mentor dashboard.
+"""Web service: Zoho Flow webhook, background poller, and cohort recordings dashboard.
 
 Run with:  python server.py   (serves on HOST:PORT via waitress)
 Put it behind nginx/Caddy with HTTPS before exposing it to the internet.
@@ -73,43 +73,46 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
  table{border-collapse:collapse;width:100%;background:#fff;font-size:.9rem}
  th,td{border-bottom:1px solid #e5e5e5;padding:8px;text-align:left;vertical-align:top}
  .s{padding:2px 8px;border-radius:10px;font-size:.8rem;white-space:nowrap}
- .done{background:#dcfce7}.failed{background:#fee2e2}.needs_mapping{background:#fef3c7}
+ .done{background:#dcfce7}.failed{background:#fee2e2}.needs_review{background:#fef3c7}
  .pending,.uploaded{background:#e0e7ff}
- form.inline{display:inline} input{padding:6px;margin:2px} button{padding:6px 10px;cursor:pointer}
- .err{color:#b91c1c;font-size:.8rem} .wrap{overflow-x:auto}
+ form.inline{display:inline} input,select{padding:6px;margin:2px} button{padding:6px 10px;cursor:pointer}
+ .err{color:#b91c1c;font-size:.8rem} .muted{color:#6b7280;font-size:.8rem} .wrap{overflow-x:auto}
 </style></head><body>
 <h1>Class Recordings</h1>
-<p>Zoho recordings are uploaded to each mentor's class playlist, then removed from Zoho.
+<p>Zoho recordings are matched to their cohort's class session in the LMS, uploaded to the cohort's
+ YouTube playlist, linked on the session for enrolled students, then removed from Zoho.
  {% if admin %}<form class="inline" method="post" action="{{ url_for('run_now') }}"><button>Check Zoho now</button></form>{% endif %}</p>
 
 <h2>Recent recordings</h2><div class="wrap"><table>
-<tr><th>Recorded</th><th>Topic</th><th>Mentor / class</th><th>Status</th><th>Video</th>{% if admin %}<th></th>{% endif %}</tr>
+<tr><th>Recorded</th><th>Topic</th><th>Cohort / session</th><th>Status</th><th>Video</th>{% if admin %}<th></th>{% endif %}</tr>
 {% for r in recordings %}<tr>
- <td>{{ r.recorded_at or '' }}</td><td>{{ r.topic or '' }}</td>
- <td>{{ r.display_name or r.mentor_key or 'unknown' }}{% if r.class_name %}<br><small>{{ r.class_name }}</small>{% endif %}</td>
+ <td>{{ r.recorded_at or '' }}</td><td>{{ r.topic or '' }}<div class="muted">{{ r.mentor_key or 'unknown host' }}</div></td>
+ <td>{% if r.cohort_name %}{{ r.cohort_name }}{% if r.session_id %}<div class="muted">session {{ r.session_id }}{% if r.lms_recording_id %} &middot; linked in LMS{% endif %}</div>{% endif %}
+   {% if r.match_reason %}<div class="muted">by {{ r.match_reason }}</div>{% endif %}{% else %}&ndash;{% endif %}</td>
  <td><span class="s {{ r.status }}">{{ r.status.replace('_',' ') }}</span>
    {% if r.last_error and r.status != 'done' %}<div class="err">{{ r.last_error[:200] }}</div>{% endif %}</td>
  <td>{% if r.video_id %}<a href="https://youtu.be/{{ r.video_id }}" target="_blank">watch</a>{% endif %}</td>
- {% if admin %}<td>{% if r.status == 'failed' %}<form class="inline" method="post" action="{{ url_for('retry', rec_id=r.erecording_id) }}"><button>Retry</button></form>{% endif %}</td>{% endif %}
+ {% if admin %}<td>
+   {% if r.status == 'failed' %}<form class="inline" method="post" action="{{ url_for('retry', rec_id=r.erecording_id) }}"><button>Retry</button></form>{% endif %}
+   {% if r.status in ('needs_review', 'failed') and cohorts %}
+   <form method="post" action="{{ url_for('assign', rec_id=r.erecording_id) }}">
+     <select name="cohort_id" required>{% for c in cohorts %}<option value="{{ c.cohort_id }}">{{ c.name }}</option>{% endfor %}</select>
+     <input name="session_id" placeholder="LMS session id (optional)" size="14" inputmode="numeric">
+     <button>Assign</button></form>{% endif %}
+ </td>{% endif %}
 </tr>{% else %}<tr><td colspan="6">Nothing processed yet.</td></tr>{% endfor %}
 </table></div>
 
-<h2>Mentors &amp; class playlists</h2><div class="wrap"><table>
-<tr><th>Zoho host (email)</th><th>Mentor</th><th>Class</th><th>Playlist</th>{% if admin %}<th></th>{% endif %}</tr>
-{% for m in mentors %}<tr><td>{{ m.mentor_key }}</td><td>{{ m.display_name }}</td><td>{{ m.class_name }}</td>
- <td><a href="https://www.youtube.com/playlist?list={{ m.playlist_id }}" target="_blank">{{ m.playlist_id }}</a></td>
- {% if admin %}<td><form class="inline" method="post" action="{{ url_for('remove_mentor') }}">
-   <input type="hidden" name="mentor_key" value="{{ m.mentor_key }}"><button>Remove</button></form></td>{% endif %}</tr>
-{% endfor %}</table></div>
-{% if admin %}
-<h3>Add / update mentor</h3>
-<form method="post" action="{{ url_for('save_mentor') }}">
- <input name="mentor_key" placeholder="Zoho host email" required>
- <input name="display_name" placeholder="Mentor name" required>
- <input name="class_name" placeholder="Class name" required>
- <input name="playlist_id" placeholder="YouTube playlist ID or URL" required>
- <button>Save</button></form>
-{% endif %}
+<h2>Cohort playlists</h2>
+<p class="muted">Active cohorts are read from the LMS. A playlist is created automatically on a cohort's first upload.</p>
+<div class="wrap"><table>
+<tr><th>Cohort</th><th>Type</th><th>Playlist</th>{% if admin %}<th>Use an existing playlist</th>{% endif %}</tr>
+{% for c in cohorts %}<tr><td>{{ c.name }}<div class="muted">LMS id {{ c.cohort_id }}</div></td><td>{{ c.type }}</td>
+ <td>{% if c.playlist_id %}<a href="https://www.youtube.com/playlist?list={{ c.playlist_id }}" target="_blank">{{ c.playlist_id }}</a>{% else %}<span class="muted">created on first upload</span>{% endif %}</td>
+ {% if admin %}<td><form class="inline" method="post" action="{{ url_for('set_playlist', cohort_id=c.cohort_id) }}">
+   <input name="playlist_id" placeholder="Playlist ID or URL"><button>Save</button></form></td>{% endif %}</tr>
+{% else %}<tr><td colspan="4">No cohorts yet; they appear after the first sync with the LMS.</td></tr>{% endfor %}
+</table></div>
 </body></html>"""
 
 
@@ -118,7 +121,7 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
 def dashboard():
     return render_template_string(
         PAGE, admin=_role() == "admin",
-        recordings=store.recent_recordings(conn), mentors=store.list_mentors(conn),
+        recordings=store.recent_recordings(conn), cohorts=store.list_cohorts(conn),
     )
 
 
@@ -129,19 +132,21 @@ def _playlist_id(value):
     return value
 
 
-@app.post("/mentors")
+@app.post("/cohorts/<int:cohort_id>/playlist")
 @requires("admin")
-def save_mentor():
-    f = request.form
-    store.upsert_mentor(conn, f["mentor_key"], f["display_name"], f["class_name"], _playlist_id(f["playlist_id"]))
-    _wake.set()
+def set_playlist(cohort_id):
+    store.set_cohort_playlist(conn, cohort_id, _playlist_id(request.form.get("playlist_id", "")))
     return redirect(url_for("dashboard"))
 
 
-@app.post("/mentors/remove")
+@app.post("/recordings/<rec_id>/assign")
 @requires("admin")
-def remove_mentor():
-    store.delete_mentor(conn, request.form["mentor_key"])
+def assign(rec_id):
+    session_id = request.form.get("session_id", "").strip()
+    if session_id and not session_id.isdigit():
+        abort(400, "Session id must be a number")
+    store.assign_recording(conn, rec_id, int(request.form["cohort_id"]), session_id or None)
+    _wake.set()
     return redirect(url_for("dashboard"))
 
 
@@ -174,8 +179,10 @@ def worker():
 
 def main():
     missing = [n for n in ("ZOHO_ZSOID", "ZOHO_CLIENT_ID", "ZOHO_CLIENT_SECRET", "ZOHO_REFRESH_TOKEN",
-                           "WEBHOOK_SECRET", "DASHBOARD_PASSWORD", "ADMIN_PASSWORD")
+                           "LMS_ORG_ID", "WEBHOOK_SECRET", "DASHBOARD_PASSWORD", "ADMIN_PASSWORD")
                if not getattr(config, n)]
+    if not (config.LMS_ACCESS_TOKEN or (config.LMS_CLIENT_ID and config.LMS_CLIENT_SECRET)):
+        missing.append("LMS_CLIENT_ID/LMS_CLIENT_SECRET (or LMS_ACCESS_TOKEN)")
     if missing:
         raise SystemExit(f"Missing settings in .env: {', '.join(missing)}")
     threading.Thread(target=worker, daemon=True).start()
