@@ -1,24 +1,40 @@
-# Class Recording Uploader (Zoho Meeting → YouTube)
+# Class Recording Uploader (Zoho Meeting → YouTube → Zindua LMS)
 
-When a mentor's Zoho Meeting recording is ready, this service:
+When a technical mentor's Zoho Meeting recording is ready, this service:
 
-1. downloads it,
-2. uploads it to YouTube (unlisted) titled `Class | Topic (date)`,
-3. adds it to **that mentor's class playlist**,
-4. confirms the video exists on YouTube, then **deletes the recording from Zoho**.
+1. finds the **cohort class session** it belongs to in the Zindua LMS,
+2. downloads it and uploads it to YouTube (unlisted) titled `Cohort | Topic (date)`,
+3. adds it to **that cohort's playlist** (one playlist per cohort, created automatically),
+4. attaches the YouTube link to the **LMS class session**, so only students enrolled in that cohort see it,
+5. confirms the video exists on YouTube, then **deletes the recording from Zoho**.
 
-Mentors open the dashboard to see their uploads and links. Admins map each mentor to a class playlist there.
-Recordings from mentors with no playlist set are **kept in Zoho** and flagged on the dashboard.
+Recordings that cannot be matched to a cohort are **kept in Zoho** and flagged on the dashboard for an admin.
+
+### How a recording finds its cohort
+
+A technical mentor (TM) can run full-time and part-time cohorts at the same time, so the host alone is
+not enough. All times are **Africa/Nairobi**. In order of confidence:
+
+| # | Rule | Example |
+|---|---|---|
+| 1 | The Zoho meeting key matches the session's **meeting link**, and the recording starts during that session | `...videomeeting?key=1234567890` |
+| 2 | The Zoho host e-mail is the session's **instructor**, and the recording starts during that session | TM's 19:00 part-time class |
+| 3 | The host is the instructor of a cohort whose **slot** contains the recording, on that day | Full-time: weekdays 09:00–14:00. Part-time: 19:00–22:00 (covers 7–9 pm and 8–10 pm cohorts) |
+
+"During" allows `MATCH_TOLERANCE_MINUTES` (45) either side of the session. Cohort type (`full-time` /
+`part-time`) comes from the LMS cohort.
 
 ## Files
 
 | File | Purpose |
 |---|---|
 | `server.py` | Web service: Zoho Flow webhook, dashboard, background worker |
-| `pipeline.py` | Download → upload → playlist → verify → delete, with a resumable ledger |
+| `pipeline.py` | Match → download → upload → playlist → verify → link in LMS → delete, with a resumable ledger |
+| `routing.py` | Matches a recording to its cohort's class session (meeting link, instructor, time slot) |
+| `lms_client.py` | Zindua LMS (Rukia API): cohorts, session schedules, session recordings |
 | `zoho_client.py` | Zoho Meeting API (auto token refresh) |
 | `youtube_client.py` | YouTube upload with retries and quota handling |
-| `store.py` | SQLite: mentor→playlist map and per-recording status |
+| `store.py` | SQLite: cohort→playlist map and per-recording status |
 | `authorize_youtube.py` | One-time YouTube login (run on your PC, not the server) |
 | `cronjob.py` | Run one cycle manually |
 | `check_zoho.py` | Finds your Zoho data centre and org ID (zsoid) |
@@ -42,7 +58,29 @@ Recordings from mentors with no playlist set are **kept in Zoho** and flagged on
    Until Google audits the project, uploads may be forced to **private**.
    When the quota runs out, the service stops and continues the next day. Nothing is lost.
 
-## 3. Server (Ubuntu example)
+## 3. Zindua LMS
+
+The service reads cohorts and class sessions and adds session recordings through the Rukia API,
+as a **machine user** rather than a person:
+
+1. In Zitadel (`https://auth.rukialabs.com`), in the same project as the LMS (so the token's audience
+   matches), create a **service user** with *Access token type: JWT*, and generate a **client secret**.
+2. Give that user an **admin** membership in the school's organisation in the LMS, so it can see every
+   cohort's schedule and add recordings to any session.
+3. In `.env` set `LMS_API_BASE_URL`, `LMS_ORG_ID` (the organisation UUID sent as `X-Org-Id`),
+   `LMS_CLIENT_ID`, `LMS_CLIENT_SECRET` and
+   `LMS_SCOPE=openid urn:zitadel:iam:org:project:id:<PROJECT_ID>:aud`.
+   A personal access token in `LMS_ACCESS_TOKEN` works instead of client credentials.
+
+TMs keep working as they do now: create the class for the cohort in the instructor app, choose
+**Add meeting link**, and paste the Zoho Meeting link. Using the full Zoho link that contains the
+meeting key gives the most reliable match.
+
+Endpoints used: `GET /cohort/all?status=active`, `GET /cohort/{id}/schedule?scope=past`,
+`GET /user/users/{id}`, `GET /event/session/{id}/recordings`, `POST /event/session-recording`.
+Each session holds at most 5 recordings, which is an LMS limit.
+
+## 4. Server (Ubuntu example)
 
 ```bash
 sudo useradd -r -m -d /opt/class-uploader uploader
@@ -58,24 +96,26 @@ sudo systemctl enable --now class-uploader
 Put HTTPS in front of it (Caddy: `uploads.yourschool.com { reverse_proxy 127.0.0.1:8080 }`).
 Make sure the disk has room for your largest recording. Files are deleted right after upload.
 
-## 4. Zoho Flow trigger (instant uploads)
+## 5. Zoho Flow trigger (instant uploads)
 
 In Zoho Flow: **Create flow → App trigger → Zoho Meeting → "Meeting recording uploaded"** (connect the admin account).
 Action: **Webhook / Send HTTP request**, `POST https://uploads.yourschool.com/webhook/zoho?token=<WEBHOOK_SECRET>`.
 
 The webhook just wakes the worker. The worker also checks Zoho every `POLL_INTERVAL_SECONDS` (15 min), so nothing is missed if Flow fails.
 
-## 5. Add mentors
+## 6. Dashboard
 
-Open `https://uploads.yourschool.com/` and log in as **admin**. For each mentor enter:
-their **Zoho host email**, name, class name, and the YouTube **playlist URL**.
-Mentors log in with the `DASHBOARD_USER` / `DASHBOARD_PASSWORD` (view only).
+Open `https://uploads.yourschool.com/` and log in as **admin**. Active cohorts are listed automatically
+from the LMS with their playlists. To reuse an existing playlist for a cohort, paste its URL before
+that cohort's first upload. Mentors log in with `DASHBOARD_USER` / `DASHBOARD_PASSWORD` (view only).
 
-If a recording appears as *needs mapping*, its host email is shown in the table. Add that email as a mentor
-and the recording is processed automatically.
+If a recording shows *needs review*, no LMS session matched it (for example, an ad-hoc meeting, or a
+class that was never scheduled in the LMS). Choose its cohort and, if possible, the LMS session id,
+then click **Assign**. Without a session id, the video goes to the cohort playlist but is not linked
+in the LMS.
 
 ## Tests
 
 ```bash
-python -m unittest test_cronjob
+python -m unittest discover -p "test_*.py"
 ```
