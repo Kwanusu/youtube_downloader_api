@@ -15,4 +15,4 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -r requirements.txt
-      - run: python -m unittest -v test_cronjob
+      - run: python -m unittest discover -v -p "test_*.py"
