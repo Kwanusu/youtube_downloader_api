@@ -1,0 +1,14 @@
+[Unit]
+Description=Zoho Meeting -> YouTube class uploader
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=uploader
+WorkingDirectory=/opt/class-uploader
+ExecStart=/opt/class-uploader/venv/bin/python server.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
