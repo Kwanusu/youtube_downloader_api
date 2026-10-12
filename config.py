@@ -29,6 +29,27 @@ YOUTUBE_TOKEN_FILE = Path(_env("YOUTUBE_TOKEN_FILE", str(BASE_DIR / "token.json"
 YOUTUBE_PRIVACY = _env("YOUTUBE_PRIVACY", "unlisted")
 YOUTUBE_CATEGORY_ID = _env("YOUTUBE_CATEGORY_ID", "27")  # Education
 
+# Zindua LMS (Rukia API). Calls are made as a Zitadel machine user that is an
+# admin member of the organisation, so every cohort's schedule is visible.
+LMS_API_BASE_URL = _env("LMS_API_BASE_URL", "https://api.rukialabs.com").rstrip("/")
+LMS_ORG_ID = _env("LMS_ORG_ID")  # organisations.id UUID, sent as X-Org-Id
+LMS_TOKEN_URL = _env("LMS_TOKEN_URL", "https://auth.rukialabs.com/oauth/v2/token")
+LMS_CLIENT_ID = _env("LMS_CLIENT_ID")
+LMS_CLIENT_SECRET = _env("LMS_CLIENT_SECRET")
+# Must include the project audience, e.g. "openid urn:zitadel:iam:org:project:id:<id>:aud"
+LMS_SCOPE = _env("LMS_SCOPE", "openid")
+# Alternative to client credentials: a long-lived personal access token.
+LMS_ACCESS_TOKEN = _env("LMS_ACCESS_TOKEN")
+
+# Class schedule (all times are local to TIMEZONE)
+TIMEZONE = _env("TIMEZONE", "Africa/Nairobi")
+FULL_TIME_HOURS = _env("FULL_TIME_HOURS", "09:00-14:00")   # weekdays
+PART_TIME_HOURS = _env("PART_TIME_HOURS", "19:00-22:00")   # covers 7-9pm and 8-10pm cohorts
+# How far a recording's start may drift from its LMS session and still match.
+MATCH_TOLERANCE_MINUTES = int(_env("MATCH_TOLERANCE_MINUTES", "45"))
+# Past sessions fetched per cohort when matching recordings.
+LMS_SESSION_LOOKBACK = int(_env("LMS_SESSION_LOOKBACK", "200"))
+
 # Storage
 DATA_DIR = Path(_env("DATA_DIR", str(BASE_DIR / "data")))
 DB_PATH = DATA_DIR / "uploader.db"
