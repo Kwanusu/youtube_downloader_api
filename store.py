@@ -1,4 +1,4 @@
-"""SQLite ledger: which recordings were processed, and mentor -> playlist routing."""
+"""SQLite ledger: cohort -> YouTube playlist, and per-recording progress."""
 import sqlite3
 import threading
 from datetime import datetime, timezone
@@ -8,18 +8,18 @@ import config
 _lock = threading.Lock()
 
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS mentors (
-    mentor_key   TEXT PRIMARY KEY,   -- lower-cased Zoho host email (or host name)
-    display_name TEXT NOT NULL,
-    class_name   TEXT NOT NULL,
-    playlist_id  TEXT NOT NULL
+CREATE TABLE IF NOT EXISTS cohorts (
+    cohort_id   INTEGER PRIMARY KEY,  -- LMS cohort id
+    name        TEXT NOT NULL,
+    type        TEXT NOT NULL,        -- full-time | part-time
+    playlist_id TEXT                  -- created on first upload, or set by an admin
 );
 CREATE TABLE IF NOT EXISTS recordings (
     erecording_id TEXT PRIMARY KEY,
     topic         TEXT,
-    mentor_key    TEXT,
+    mentor_key    TEXT,               -- Zoho host (e-mail or name)
     recorded_at   TEXT,
-    status        TEXT NOT NULL,     -- pending | needs_mapping | uploaded | done | failed
+    status        TEXT NOT NULL,      -- pending | needs_review | uploaded | done | failed
     video_id      TEXT,
     playlist_id   TEXT,
     attempts      INTEGER NOT NULL DEFAULT 0,
@@ -27,6 +27,14 @@ CREATE TABLE IF NOT EXISTS recordings (
     updated_at    TEXT NOT NULL
 );
 """
+
+# Columns added for the LMS integration; ALTERed into older databases.
+RECORDING_COLUMNS = {
+    "cohort_id": "INTEGER",
+    "session_id": "INTEGER",
+    "match_reason": "TEXT",           # how the cohort was chosen, or 'manual'
+    "lms_recording_id": "TEXT",       # set once the link is posted to the LMS session
+}
 
 
 def _now():
@@ -40,42 +48,43 @@ def connect(path=None):
     conn = sqlite3.connect(path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn
 
 
-# ---- mentors -------------------------------------------------------------
+def _migrate(conn):
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(recordings)")}
+    with conn:
+        for column, kind in RECORDING_COLUMNS.items():
+            if column not in existing:
+                conn.execute(f"ALTER TABLE recordings ADD COLUMN {column} {kind}")
+        conn.execute("UPDATE recordings SET status='needs_review' WHERE status='needs_mapping'")
 
-def list_mentors(conn):
-    return conn.execute("SELECT * FROM mentors ORDER BY display_name").fetchall()
+
+# ---- cohorts -------------------------------------------------------------
+
+def list_cohorts(conn):
+    return conn.execute("SELECT * FROM cohorts ORDER BY type, name").fetchall()
 
 
-def upsert_mentor(conn, mentor_key, display_name, class_name, playlist_id):
+def get_cohort(conn, cohort_id):
+    return conn.execute("SELECT * FROM cohorts WHERE cohort_id=?", (cohort_id,)).fetchone()
+
+
+def upsert_cohort(conn, cohort_id, name, cohort_type):
+    """Record a cohort seen in the LMS, keeping any playlist already assigned."""
     with _lock, conn:
         conn.execute(
-            "INSERT INTO mentors VALUES (?, ?, ?, ?) ON CONFLICT(mentor_key) DO UPDATE SET "
-            "display_name=excluded.display_name, class_name=excluded.class_name, "
-            "playlist_id=excluded.playlist_id",
-            (mentor_key.strip().lower(), display_name.strip(), class_name.strip(), playlist_id.strip()),
-        )
-        # Recordings that were waiting for this mentor can now be processed.
-        conn.execute(
-            "UPDATE recordings SET status='pending', updated_at=? "
-            "WHERE status='needs_mapping' AND mentor_key=?",
-            (_now(), mentor_key.strip().lower()),
+            "INSERT INTO cohorts (cohort_id, name, type) VALUES (?, ?, ?) "
+            "ON CONFLICT(cohort_id) DO UPDATE SET name=excluded.name, type=excluded.type",
+            (int(cohort_id), name, cohort_type),
         )
 
 
-def delete_mentor(conn, mentor_key):
+def set_cohort_playlist(conn, cohort_id, playlist_id):
     with _lock, conn:
-        conn.execute("DELETE FROM mentors WHERE mentor_key=?", (mentor_key,))
-
-
-def find_mentor(conn, candidate_keys):
-    for key in candidate_keys:
-        row = conn.execute("SELECT * FROM mentors WHERE mentor_key=?", (key,)).fetchone()
-        if row:
-            return row
-    return None
+        conn.execute("UPDATE cohorts SET playlist_id=? WHERE cohort_id=?",
+                     (playlist_id.strip() or None, int(cohort_id)))
 
 
 # ---- recordings ----------------------------------------------------------
@@ -117,6 +126,18 @@ def record_failure(conn, erecording_id, error):
         )
 
 
+def assign_recording(conn, erecording_id, cohort_id, session_id=None):
+    """Admin override for a recording the router could not place."""
+    with _lock, conn:
+        conn.execute(
+            "UPDATE recordings SET cohort_id=?, session_id=?, match_reason='manual', "
+            "attempts=0, last_error=NULL, updated_at=?, "
+            "status=CASE WHEN video_id IS NULL THEN 'pending' ELSE 'uploaded' END "
+            "WHERE erecording_id=? AND status IN ('needs_review', 'failed', 'pending')",
+            (int(cohort_id), int(session_id) if session_id else None, _now(), erecording_id),
+        )
+
+
 def retry_recording(conn, erecording_id):
     with _lock, conn:
         conn.execute(
@@ -129,8 +150,8 @@ def retry_recording(conn, erecording_id):
 
 def recent_recordings(conn, limit=200):
     return conn.execute(
-        "SELECT r.*, m.display_name, m.class_name FROM recordings r "
-        "LEFT JOIN mentors m ON m.mentor_key = r.mentor_key "
+        "SELECT r.*, c.name AS cohort_name, c.type AS cohort_type FROM recordings r "
+        "LEFT JOIN cohorts c ON c.cohort_id = r.cohort_id "
         "ORDER BY r.updated_at DESC LIMIT ?",
         (limit,),
     ).fetchall()
