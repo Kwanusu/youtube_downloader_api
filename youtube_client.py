@@ -90,6 +90,20 @@ def _backoff(retries, error):
     return retries
 
 
+def create_playlist(youtube, title, description=""):
+    """Create a playlist with the same privacy as uploaded videos. Returns its id."""
+    try:
+        return youtube.playlists().insert(
+            part="snippet,status",
+            body={"snippet": {"title": title[:150], "description": description[:5000]},
+                  "status": {"privacyStatus": config.YOUTUBE_PRIVACY}},
+        ).execute()["id"]
+    except HttpError as e:
+        if _is_quota_error(e):
+            raise QuotaExceeded("YouTube quota exceeded") from e
+        raise
+
+
 def add_to_playlist(youtube, video_id, playlist_id):
     try:
         return youtube.playlistItems().insert(
