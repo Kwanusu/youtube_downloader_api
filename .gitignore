@@ -24,3 +24,8 @@ __pycache__/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Local work, not part of this project
+course/
+.archify/
+docs/*.delivery.json
