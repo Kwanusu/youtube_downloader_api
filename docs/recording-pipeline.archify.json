@@ -1,0 +1,66 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Class Recording Pipeline",
+    "quality_profile": "showcase",
+    "output": "docs/recording-pipeline.html"
+  },
+  "lanes": [
+    { "id": "zoho", "label": "Zoho Meeting" },
+    { "id": "svc", "label": "Uploader Service" },
+    { "id": "lms", "label": "Zindua LMS" },
+    { "id": "yt", "label": "YouTube" },
+    { "id": "admin", "label": "Admin Dashboard", "variant": "exception" }
+  ],
+  "phases": [
+    { "id": "trigger", "label": "Trigger", "fromCol": 0, "toCol": 1 },
+    { "id": "match", "label": "Match cohort", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
+    { "id": "publish", "label": "Publish + clean up", "fromCol": 4, "toCol": 5, "variant": "dashed" }
+  ],
+  "mainPath": ["rec", "wake", "route", "download", "upload", "playlist", "link", "delete"],
+  "nodes": [
+    { "id": "rec", "lane": "zoho", "col": 0, "type": "external", "label": "Recording ready", "sublabel": "mentor's class", "width": 132 },
+    { "id": "delete", "lane": "zoho", "col": 5, "type": "external", "label": "Delete Recording", "sublabel": "only after all checks", "width": 132 },
+    { "id": "wake", "lane": "svc", "col": 1, "type": "backend", "label": "Wake Worker", "sublabel": "webhook or 15-min poll", "width": 132 },
+    { "id": "download", "lane": "svc", "col": 3, "type": "backend", "label": "Download", "sublabel": "temp file, deleted after", "width": 132 },
+    { "id": "route", "lane": "lms", "col": 2, "type": "backend", "label": "Match Cohort", "sublabel": "link, instructor, slot", "width": 132 },
+    { "id": "link", "lane": "lms", "col": 5, "type": "database", "label": "Link in LMS", "sublabel": "session recording", "width": 132 },
+    { "id": "upload", "lane": "yt", "col": 4, "type": "cloud", "label": "Upload Video", "sublabel": "unlisted, Cohort | Topic", "width": 132 },
+    { "id": "playlist", "lane": "yt", "col": 5, "type": "cloud", "label": "Cohort Playlist", "sublabel": "add, then confirm exists", "width": 132 },
+    { "id": "assign", "lane": "admin", "col": 1, "type": "security", "label": "Admin Assigns", "sublabel": "cohort + session id", "width": 132 },
+    { "id": "review", "lane": "admin", "col": 2, "type": "security", "label": "Needs Review", "sublabel": "kept in Zoho, alert sent", "width": 132 }
+  ],
+  "edges": [
+    { "id": "e1", "from": "rec", "to": "wake", "label": "Zoho Flow", "variant": "emphasis" },
+    { "id": "e2", "from": "wake", "to": "route", "label": "list recordings", "variant": "emphasis" },
+    { "id": "e3", "from": "route", "to": "download", "label": "matched", "variant": "emphasis" },
+    { "id": "e4", "from": "download", "to": "upload", "variant": "emphasis" },
+    { "id": "e5", "from": "upload", "to": "playlist", "variant": "emphasis" },
+    { "id": "e6", "from": "playlist", "to": "link", "label": "youtu.be link", "variant": "emphasis" },
+    { "id": "e7", "from": "link", "to": "delete", "label": "done", "variant": "emphasis" },
+    { "id": "e8", "from": "route", "to": "review", "label": "no match", "variant": "security", "role": "error" },
+    { "id": "e9", "from": "review", "to": "assign", "variant": "security", "role": "branch" },
+    { "id": "e10", "from": "assign", "to": "route", "label": "re-run", "variant": "security", "role": "return" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "How a cohort is found",
+      "items": [
+        "1. Zoho meeting key equals the session's meeting link",
+        "2. Host is the session's instructor, at the session time",
+        "3. Host's cohort slot contains the recording (full-time 09-14, part-time 19-22)"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Safe to retry",
+      "items": [
+        "Each step is saved in SQLite, so a crash never re-uploads a video",
+        "Zoho copy is deleted only after YouTube and LMS both succeed",
+        "YouTube quota exhausted: stop, resume next day"
+      ]
+    }
+  ]
+}

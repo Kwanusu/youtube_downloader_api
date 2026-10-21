@@ -16,6 +16,8 @@ Recordings that cannot be matched to a cohort are **kept in Zoho** and flagged o
 
 An [interactive version](docs/recording-pipeline.html) (download and open in a browser) lets you pan, zoom and switch themes.
 
+The diagram is generated with [Archify](https://github.com/tt-a1i/archify) from [`docs/recording-pipeline.archify.json`](docs/recording-pipeline.archify.json). After the pipeline changes, edit that file and regenerate the HTML with `node <archify>/bin/archify.mjs finalize workflow docs/recording-pipeline.archify.json docs/recording-pipeline.html --quality showcase`; the PNG is a screenshot of it.
+
 1. **Trigger:** a Zoho Flow webhook wakes the worker, which also polls Zoho every 15 minutes as a safety net.
 2. **Match:** the recording is matched to a cohort class session in the LMS. No match means *needs review*: the recording stays in Zoho, an alert is sent, and an admin assigns a cohort on the dashboard.
 3. **Publish:** download, upload to YouTube (unlisted), add to the cohort playlist and confirm the video exists.
