@@ -10,6 +10,17 @@ When a technical mentor's Zoho Meeting recording is ready, this service:
 
 Recordings that cannot be matched to a cohort are **kept in Zoho** and flagged on the dashboard for an admin.
 
+### What happens, step by step
+
+![Class recording pipeline: Zoho recording to cohort match, YouTube upload, LMS link and Zoho cleanup](docs/recording-pipeline.png)
+
+An [interactive version](docs/recording-pipeline.html) (download and open in a browser) lets you pan, zoom and switch themes.
+
+1. **Trigger:** a Zoho Flow webhook wakes the worker, which also polls Zoho every 15 minutes as a safety net.
+2. **Match:** the recording is matched to a cohort class session in the LMS. No match means *needs review*: the recording stays in Zoho, an alert is sent, and an admin assigns a cohort on the dashboard.
+3. **Publish:** download, upload to YouTube (unlisted), add to the cohort playlist and confirm the video exists.
+4. **Link and clean up:** attach the YouTube link to the LMS session, then delete the recording from Zoho. Every step is saved, so a retry never re-uploads.
+
 ### How a recording finds its cohort
 
 A technical mentor (TM) can run full-time and part-time cohorts at the same time, so the host alone is
